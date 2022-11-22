@@ -1,0 +1,513 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.Common;
+using System.Data.SqlClient;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Phoenix.CommonTypes;
+using Phoenix.GeneralUtils;
+using static Phoenix.CommonTypes.DataManager.SQLColumnTypeMapper;
+
+namespace Phoenix.DataLayer.ISO
+{
+    public abstract class DBManager
+    {
+        #region " Variables "
+
+        protected string strConnectionString;
+        protected string strStatus;
+        protected string strOwnerSchema = "";
+        protected int databaseTimeout = 0;
+        protected DbConnection connection;
+        protected DbCommand command;
+        public DbTransaction transaction;
+        #endregion " Variables "
+
+        #region " Properties "
+        public string Status
+        {
+            get
+            {
+                return strStatus;
+            }
+            set
+            {
+                strStatus = value;
+            }
+        }
+        public virtual string ConnectionString
+        {
+            get
+            {
+                return strConnectionString;
+            }
+            set
+            {
+                strConnectionString = value;
+            }
+        }
+        protected string OwnerSchema
+        {
+            get { return strOwnerSchema; }
+            set { strOwnerSchema = value; }
+        }
+
+        public int DatabaseTimeout
+        {
+            get { return databaseTimeout; }
+            set { databaseTimeout = value; }
+        }
+
+        #endregion " Properties "
+
+        #region " Abstract Methods "
+
+        internal abstract DbConnection GetDataProviderConnection();
+        internal abstract DbCommand GeDataProviderCommand();
+        internal abstract DbCommand GeDataProviderCommand(string CommandText);
+        internal abstract DbDataAdapter GetDataProviderDataAdapter();
+        internal abstract DbCommandBuilder GetDataProviderCommandBuilder();
+        internal abstract IDbDataParameter[] GetParameterObject(int ArraySize);
+
+        public abstract void SetArrayBindCount(DbCommand CommandObj, int ArrayBindCount);
+        public abstract void SetArrayBindSize(IDbDataParameter Param, int[] ArrayBindSize);
+
+        public abstract IDataReader ExecuteDataReader(string commandText);
+        public abstract IDataReader ExecuteDataReader(string commandText, CommandType commandType);
+        public abstract IDataReader ExecuteDataReader(string commandText, IDbDataParameter[] commandParameters);
+        public abstract IDataReader ExecuteDataReader(string commandText, CommandType commandType, IDbDataParameter[] commandParameters);
+
+        public abstract DataSet ExecuteDataSet(string commandText);
+        public abstract DataSet ExecuteDataSet(string commandText, CommandType commandType);
+        public abstract DataSet ExecuteDataSet(string commandText, IDbDataParameter[] commandParameters);
+        public abstract DataSet ExecuteDataSet(string commandText, CommandType commandType, IDbDataParameter[] commandParameters);
+        public abstract DataSet ExecuteDataSet(string commandText, CommandType commandType, IDbDataParameter[] commandParameters, bool AddWithKey);
+
+        public abstract void ExecuteWithDataSet(string commandText, string srcTable, DataSet Ds);
+        public abstract void ExecuteWithDataSet(string commandText, string srcTable, DataSet Ds, bool AddWithKey);
+        public abstract void ExecuteWithDataSet(string commandText, string srcTable, DataSet Ds, bool AddWithKey, bool ReturnProviderSpecificTypes);
+
+        public abstract int RPM_ExecuteNonQuery(string SqlString);
+        public abstract void RPM_ExecuteNonQuery(string SPName, object[] ParameterValues, out ArrayList outparams);
+        public abstract void RPM_ExecuteNonQuery(string SPName, object[] ParameterValues);
+        public abstract void RPM_ExecuteNonQueryForStoreProcedureRefreshed(string SPName, object[] ParameterValues);
+
+        public abstract void RPM_ExecuteNonQueryForADGMOnly(string SPName, object[] ParameterValues, int TimeOut);
+
+        public abstract DataTable RPM_ExecuteDataTable(string SPName, object[] ParameterValues, bool AddWithKey);
+        public abstract DataTable RPM_ExecuteDataTable(string SPName, object[] ParameterValues, bool AddWithKey, bool ProviderSpecificTypes);
+
+        public abstract DataSet RPM_ExecuteDataSet(string SPName, object[] ParameterValues, bool AddWithKey);
+        public abstract DataSet RPM_ExecuteDataSet(string SPName, object[] ParameterValues, bool AddWithKey, bool ProviderSpecificTypes);
+        public abstract DataSet RPM_ExecuteDataSet(string SPName, bool AddWithKey);
+        public abstract DataSet RPM_ExecuteDataSet(string SPName, object[] ParameterValues, bool AddWithKey, bool ProviderSpecificTypes, bool Includereturnvalue);
+        /*
+        public abstract DataTable ReturnDataTable(string SqlString);
+        public abstract DataTable ReturnDataTable(string SpName, params SPParameter[] arrParms);
+        public abstract void Execute(string SqlString);
+        public abstract void Execute(string SpName, params SPParameter[] arrParms);
+        public abstract string ExecuteScalar(string SqlString);
+        public abstract int ExecuteScalar(string SqlString, params SPParameter[] arrParms); 
+        */
+
+        #endregion " Abstract Methods "
+
+        protected void PrepareCommand(CommandType commandType, string commandText, IDbDataParameter[] commandParameters, int ArrayBindCount)
+        {
+            if (connection == null)
+            {
+                connection = GetDataProviderConnection();
+            }
+
+            command = GeDataProviderCommand();
+
+            command.Connection = connection;
+            // command.CommandTimeout = DatabaseTimeout;
+            command.CommandText = commandText;
+            command.CommandType = commandType;
+
+            if (ArrayBindCount != 0)
+            {
+                //((Oracle.DataAccess.Client.OracleCommand)command).ArrayBindCount = ArrayBindCount;
+            }
+
+            if (transaction != null)
+                command.Transaction = transaction;
+
+            if (commandParameters != null)
+            {
+                if (command.Parameters.Count > 0)
+                    command.Parameters.Clear();
+
+                foreach (IDbDataParameter param in commandParameters)
+                    command.Parameters.Add(param);
+            }
+        }
+
+        protected void PrepareCommand(CommandType commandType, string commandText, IDbDataParameter[] commandParameters)
+        {
+            PrepareCommand(commandType, commandText, commandParameters, 0);
+        }
+
+        protected void RPM_AssignParameterValues(SqlParameter[] commandParameters, object[] parameterValues)
+        {
+            if ((commandParameters == null) || (parameterValues == null))
+            {
+                return;
+            }
+            if (commandParameters.Length != parameterValues.Length)
+            {
+                throw new ArgumentException("Parameter count does not match Parameter Value count.");
+            }
+            for (int i = 0, j = commandParameters.Length; i < j; i++)
+            {
+                commandParameters[i].Value = parameterValues[i];
+            }
+        }
+
+        protected void RPM_AssignParameterDefaultValues(SqlParameter[] commandParameters, object[] parameterValues)
+        {
+            if ((commandParameters == null) || (parameterValues == null))
+            {
+                return;
+            }
+            for (int i = 0, j = commandParameters.Length; i < j; i++)
+            {
+                int DataType = GetLocalDatabaseTypeAsIntegar(commandParameters[i].SqlDbType.ToString());
+
+                if (parameterValues[i].ToString().ToUpper() == "ACTION")
+                    commandParameters[i].Value = "L";
+                if (DataType == 22 || DataType == 12 || DataType == 18 || DataType == 11 || DataType == 23)
+                    commandParameters[i].Value = "A";
+                //TinyInt = 20,
+                //SmallInt = 16,
+                //Int = 8,
+                //BigInt = 0,
+                else if (DataType == 20 || DataType == 16 || DataType == 8 || DataType == 0)
+                    commandParameters[i].Value = 1;
+                //Decimal = 5,
+                //Float = 6,
+                //Bit = 2,
+                //Money = 9,
+                //Numeric = 100
+                else if (DataType == 5 || DataType == 6 || DataType == 9 || DataType == 100)
+                    commandParameters[i].Value = 1;
+                else if (DataType == 2)
+                    commandParameters[i].Value = true;
+                //DateTime = 4,
+                else if (DataType == 4 || DataType == 24)
+                    commandParameters[i].Value = DateTime.Now;
+                else
+                    commandParameters[i].Value = "a";
+
+                //commandParameters[i].Value = parameterValues[i];
+            }
+        }
+
+        protected void RPM_AssignParameterValues(SqlParameter[] commandParameters, object[,] parameterValues,
+            int SingleValueColumn1Index, object SingleValueColumn1Value,
+            int SingleValueColumn2Index, object SingleValueColumn2Value,
+            int SingleValueColumn3Index, object SingleValueColumn3Value,
+            int SingleValueColumn4Index, object SingleValueColumn4Value,
+            int SingleValueColumn5Index, object SingleValueColumn5Value)
+        {
+            if ((commandParameters == null) || (parameterValues == null))
+            {
+                return;
+            }
+            for (int i = 0; i < commandParameters.Length; i++)
+            {
+                object[] paramvaluearray = new object[parameterValues.GetLength(0)];
+                if (i == SingleValueColumn1Index)
+                {
+                    paramvaluearray =GenerateReplicatedArray(SingleValueColumn1Value, parameterValues.GetLength(0));
+                }
+                else if (i == SingleValueColumn2Index)
+                {
+                    paramvaluearray = GenerateReplicatedArray(SingleValueColumn2Value, parameterValues.GetLength(0));
+                }
+                else if (i == SingleValueColumn3Index)
+                {
+                    paramvaluearray =GenerateReplicatedArray(SingleValueColumn3Value, parameterValues.GetLength(0));
+                }
+                else if (i == SingleValueColumn4Index)
+                {
+                    paramvaluearray =GenerateReplicatedArray(SingleValueColumn4Value, parameterValues.GetLength(0));
+                }
+                else if (i == SingleValueColumn5Index)
+                {
+                    paramvaluearray = GenerateReplicatedArray(SingleValueColumn5Value, parameterValues.GetLength(0));
+                }
+                else
+                {
+                    for (int j = 0; j < parameterValues.GetLength(0); j++)
+                    {
+                        paramvaluearray[j] = parameterValues[j, i];
+                    }
+                }
+
+                if (commandParameters[i].Direction != ParameterDirection.Output)
+                {
+                    //commandParameters[i].SqlDbType = SqlDbType. 
+                    commandParameters[i].Value = paramvaluearray;
+                    commandParameters[i].Size = paramvaluearray.Length;
+                }
+            }
+        }
+
+        protected void RPM_PrepareCommand(string SPName, int ArrayBindCount)
+        {
+            if (connection == null)
+            {
+                connection = GetDataProviderConnection();
+            }
+
+            command = GeDataProviderCommand();
+            command.Connection = connection;
+            //command.CommandTimeout = DatabaseTimeout;
+            command.CommandText = SPName;
+            command.CommandType = CommandType.StoredProcedure;
+
+            if (transaction != null)
+                command.Transaction = transaction;
+            //checck
+        }
+
+        protected void RPM_AttachParameters(SqlParameter[] commandParameters)
+        {
+            if (commandParameters != null)
+            {
+                if (command.Parameters.Count > 0)
+                    command.Parameters.Clear();
+
+                foreach (IDbDataParameter param in commandParameters)
+                    command.Parameters.Add(param);
+            }
+        }
+
+        protected ArrayList RPM_GetOutParamValues(SqlParameter[] cmdparams)
+        {
+            ArrayList tmpar = new ArrayList();
+            for (int i = 0; i < cmdparams.Length; i++)
+            {
+                if (cmdparams[i].Direction == ParameterDirection.InputOutput || cmdparams[i].Direction == ParameterDirection.Output)
+                    tmpar.Add(cmdparams[i].Value);
+            }
+            return tmpar;
+        }
+
+        #region Database Transaction
+        public void BeginTransaction()
+        {
+            if (transaction != null)
+            { throw new Exception("Transaction is in process. cannot start new transaction."); }
+
+            try
+            {
+                if (connection == null) connection = GetDataProviderConnection();
+                connection.Open();
+                transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            }
+            catch
+            {
+                connection.Close(); throw;
+            }
+        }
+
+        public void CommitTransaction()
+        {
+            if (transaction == null)
+            { throw new Exception("Transaction is not set. cannot commit."); }
+
+            try
+            { transaction.Commit(); }
+            catch
+            {
+                RollbackTransaction(); throw;
+            }
+            finally
+            { connection.Close(); transaction = null; }
+        }
+
+        public void RollbackTransaction()
+        {
+            if (transaction == null)
+            { throw new Exception("Transaction is not set. cannot rollback."); }
+
+            try
+            { transaction.Rollback(); }
+            catch { }
+            finally
+            { connection.Close(); transaction = null; }
+        }
+
+        public static object[] GenerateReplicatedArray(object objip, int length)
+        {
+            object[] RepArray = new object[length];
+            for (int i = 0; i < length; i++)
+                RepArray[i] = objip;
+            return RepArray;
+        }
+
+        public static int GetLocalDatabaseTypeAsIntegar(string TypeName)
+        {
+            if (TypeName.Equals(TableColumnType.BigInt.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.BigInt;
+
+            if (TypeName.Equals(TableColumnType.Bit.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.Bit;
+
+            if (TypeName.Equals(TableColumnType.DateTime.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.DateTime;
+
+            if (TypeName.Equals(TableColumnType.Decimal.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.Decimal;
+
+            if (TypeName.Equals(TableColumnType.Float.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.Float;
+
+            if (TypeName.Equals(TableColumnType.Int.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.Int;
+
+            if (TypeName.Equals(TableColumnType.Money.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.Money;
+
+            if (TypeName.Equals(TableColumnType.NText.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.NText;
+
+            if (TypeName.Equals(TableColumnType.Numeric.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.Numeric;
+
+            if (TypeName.Equals(TableColumnType.NVarChar.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.NVarChar;
+
+            if (TypeName.Equals(TableColumnType.SmallInt.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.SmallInt;
+
+            if (TypeName.Equals(TableColumnType.Text.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.Text;
+
+            if (TypeName.Equals(TableColumnType.TinyInt.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.TinyInt;
+
+            if (TypeName.Equals(TableColumnType.Varchar.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.Varchar;
+
+            if (TypeName.Equals(TableColumnType.Char.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.Char;
+
+            if (TypeName.Equals(TableColumnType.Date.ToString(), StringComparison.CurrentCultureIgnoreCase))
+                return (int)TableColumnType.Date;
+
+            return -1;
+        }
+        #endregion
+
+    }
+
+    public sealed class SqlHelperParameterCache
+    {
+        #region private methods, variables, and constructors
+
+        private SqlHelperParameterCache() { }
+
+        private static Hashtable paramCache = Hashtable.Synchronized(new Hashtable());
+
+        private static SqlParameter[] DiscoverSpParameterSet(string connectionString, string spName, bool includeReturnValueParameter)
+        {
+            DbConnectionStringBuilder constbuilder = new SqlConnectionStringBuilder(connectionString);
+            using (SqlConnection cn = new SqlConnection(constbuilder.ConnectionString))
+
+          //using (SqlConnection cn = new SqlConnection(connectionString))
+            using (SqlCommand cmd = new SqlCommand(spName, cn))
+            {
+                cn.Open();
+                cmd.CommandType = CommandType.StoredProcedure;
+
+                SqlCommandBuilder.DeriveParameters(cmd);
+
+                if (!includeReturnValueParameter)
+                {
+                    cmd.Parameters.RemoveAt(0);
+                }
+
+                SqlParameter[] discoveredParameters = new SqlParameter[cmd.Parameters.Count]; ;
+
+                cmd.Parameters.CopyTo(discoveredParameters, 0);
+
+                return discoveredParameters;
+            }
+        }
+
+        private static SqlParameter[] CloneParameters(SqlParameter[] originalParameters)
+        {
+            SqlParameter[] clonedParameters = new SqlParameter[originalParameters.Length];
+
+            for (int i = 0, j = originalParameters.Length; i < j; i++)
+            {
+                clonedParameters[i] = (SqlParameter)((ICloneable)originalParameters[i]).Clone();
+            }
+
+            return clonedParameters;
+        }
+
+        #endregion private methods, variables, and constructors
+
+        #region caching functions
+
+        public static void CacheParameterSet(string connectionString, string commandText, params SqlParameter[] commandParameters)
+        {
+            string hashKey = connectionString + ":" + commandText;
+
+            paramCache[hashKey] = commandParameters;
+        }
+
+        public static SqlParameter[] GetCachedParameterSet(string connectionString, string commandText)
+        {
+            string hashKey = connectionString + ":" + commandText;
+
+            SqlParameter[] cachedParameters = (SqlParameter[])paramCache[hashKey];
+
+            if (cachedParameters == null)
+            {
+                return null;
+            }
+            else
+            {
+                return CloneParameters(cachedParameters);
+            }
+        }
+
+        #endregion caching functions
+
+        #region Parameter Discovery Functions
+
+
+        public static SqlParameter[] GetSpParameterSet(string connectionString, string spName)
+        {
+            return GetSpParameterSet(connectionString, spName, false);
+        }
+
+        public static SqlParameter[] GetSpParameterSet(string connectionString, string spName, bool includeReturnValueParameter)
+        {
+            string hashKey = connectionString + ":" + spName + (includeReturnValueParameter ? ":include ReturnValue Parameter" : "");
+
+            SqlParameter[] cachedParameters;
+
+            cachedParameters = (SqlParameter[])paramCache[hashKey];
+
+            if (cachedParameters == null)
+            {
+                cachedParameters = (SqlParameter[])(paramCache[hashKey] = DiscoverSpParameterSet(connectionString, spName, includeReturnValueParameter));
+            }
+
+            return CloneParameters(cachedParameters);
+        }
+
+        #endregion Parameter Discovery Functions
+
+    }
+}
